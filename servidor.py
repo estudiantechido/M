@@ -4,7 +4,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from pagina import datos_bajos, responder
+from pagina import datos_bajos, datos_lavavajillas, responder
+from pdf_corte import pdf_corte
+from pdf_lava import pdf_lavavajillas
 from pdf_zoclo import pdf_zoclo
 
 HOST = "127.0.0.1"
@@ -32,12 +34,25 @@ class Manejador(BaseHTTPRequestHandler):
         if url.path not in ("/", "/ejemplo", "/columna"):
             self.send_error(404)
             return
-        query = parse_qs(url.query)
-        pieza = "columna" if url.path in ("/ejemplo", "/columna") or query.get("pieza", [""])[0] == "columna" else "bajos"
-        if pieza == "bajos" and url.path == "/" and query.get("carpintero", [""])[0] == "pdf":
-            pdf = pdf_zoclo(datos_bajos(query))
+        query = parse_qs(url.query, keep_blank_values=True)
+        pedido = query.get("pieza", [""])[0]
+        if url.path in ("/ejemplo", "/columna") or pedido == "columna":
+            pieza = "columna"
+        elif pedido == "lavavajillas":
+            pieza = "lavavajillas"
+        else:
+            pieza = "bajos"
+        pedido_pdf = None
+        if url.path == "/" and pieza == "lavavajillas" and query.get("corte", [""])[0] == "pdf":
+            pedido_pdf = (pdf_corte(datos_lavavajillas(query)), "corte.pdf", "Revisa las medidas.".encode("utf-8"))
+        elif url.path == "/" and query.get("carpintero", [""])[0] == "pdf" and pieza in ("bajos", "lavavajillas"):
+            if pieza == "lavavajillas":
+                pedido_pdf = (pdf_lavavajillas(datos_lavavajillas(query)), "lavavajillas.pdf", "Revisa las medidas.".encode("utf-8"))
+            else:
+                pedido_pdf = (pdf_zoclo(datos_bajos(query)), "zoclo.pdf", "Este zoclo todavía no se arma. Revisa las medidas.".encode("utf-8"))
+        if pedido_pdf:
+            pdf, nombre, aviso = pedido_pdf
             if pdf is None:
-                aviso = "Este zoclo todavía no se arma. Revisa las medidas.".encode("utf-8")
                 self.send_response(400)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(aviso)))
@@ -47,7 +62,7 @@ class Manejador(BaseHTTPRequestHandler):
                 return
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
-            self.send_header("Content-Disposition", 'attachment; filename="zoclo.pdf"')
+            self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
             self.send_header("Content-Length", str(len(pdf)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()

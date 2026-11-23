@@ -1,13 +1,95 @@
-/* Render de la columna. El despiece de verdad lo calcula despiece.py.
-   Aquí solo se dibuja, con las mismas reglas de armado:
-   laterales de piso a techo, entrepaños entre ellos, puertas de parche,
-   tapa hacia arriba y hueco sin fondo. */
+/* Dibuja la columna, la barra y el cajón del lavavajillas.
+   El despiece de verdad lo calcula despiece.py. */
 (function () {
   const lienzo = document.getElementById("lienzo");
   const form = document.querySelector("form");
   const leyenda = document.getElementById("leyenda");
   const apertura = document.getElementById("apertura");
   if (!lienzo || !form) return;
+
+  function actualizarMedicionForma() {
+    const activa = form.querySelector('input[name="distribucion"]:checked');
+    const forma = activa ? activa.value : "l";
+    document.querySelectorAll(".solo-distribucion").forEach((bloque) => {
+      bloque.hidden = !bloque.classList.contains(`solo-${forma}`);
+    });
+  }
+  form.querySelectorAll('input[name="distribucion"]').forEach((radio) => {
+    radio.addEventListener("change", actualizarMedicionForma);
+  });
+  actualizarMedicionForma();
+
+  function valorMm(nombre, defecto) {
+    const campo = form.elements[nombre];
+    if (!campo) return defecto;
+    const texto = String(campo.value || "").trim().replace(",", ".");
+    if (!texto) return defecto;
+    if (!/^-?\d+(\.\d+)?$/.test(texto)) return defecto;
+    const valor = Number(texto);
+    return Number.isFinite(valor) ? Math.round(valor * 10) : defecto;
+  }
+
+  function actualizarCroquis() {
+    if (esBajos === undefined || esBajos === false) return;
+    const svg = document.getElementById("croquis-svg");
+    if (!svg) return;
+    const frente = valorMm("largo_pared_a", valorMm("largo_barra", 1690));
+    const lado = valorMm("largo_pared_b", valorMm("largo_vuelta", 1290));
+    const fondoFrente = valorMm("fondo_barra", 610);
+    const fondoLado = valorMm("fondo_vuelta", 590);
+    const frenteTarja = valorMm("ancho_tarja", 1100);
+    const puertaVuelta = valorMm("puerta_vuelta", 590);
+    const alto = valorMm("alto_barra", 800);
+    const profundidadEsquina = valorMm("profundidad_esquina", 900);
+    if ([frente, lado, fondoFrente, fondoLado, frenteTarja].some((n) => n <= 0)) return;
+
+    const mx = 125;
+    const my = 82;
+    const escala = Math.min(475 / frente, 400 / lado);
+    const ancho = frente * escala;
+    const altoPlan = lado * escala;
+    const df = fondoFrente * escala;
+    const dl = fondoLado * escala;
+    const wt = frenteTarja * escala;
+    const xEsquina = mx;
+    const xTarja = mx + dl;
+    const yEsquina = my;
+    const esquinaW = dl;
+    const vueltaH = Math.max(20, altoPlan - df);
+
+    const lineaCota = (x1, y1, x2, y2, texto, vertical = false) => {
+      const tX = vertical ? x1 - 12 : (x1 + x2) / 2;
+      const tY = vertical ? (y1 + y2) / 2 : y1 - 12;
+      const giro = vertical ? ` transform="rotate(-90 ${tX} ${tY})"` : "";
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#8c3b2a" stroke-width="1.5"/><line x1="${x1 - (vertical ? 5 : 0)}" y1="${y1 - (vertical ? 0 : 5)}" x2="${x1 + (vertical ? 5 : 0)}" y2="${y1 + (vertical ? 0 : 5)}" stroke="#8c3b2a"/><line x1="${x2 - (vertical ? 5 : 0)}" y1="${y2 - (vertical ? 0 : 5)}" x2="${x2 + (vertical ? 5 : 0)}" y2="${y2 + (vertical ? 0 : 5)}" stroke="#8c3b2a"/><text x="${tX}" y="${tY}" text-anchor="middle"${giro} fill="#8c3b2a" font-size="16" font-family="sans-serif">${texto}</text>`;
+    };
+
+    const esquineroForma = `<rect x="${xEsquina}" y="${yEsquina}" width="${esquinaW}" height="${df}" fill="#ece4d6" stroke="#1c1915" stroke-width="2"/>`;
+
+    svg.innerHTML = `
+      <defs>
+        <marker id="flecha-plan" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="#8c3b2a"/></marker>
+      </defs>
+      <rect x="${mx}" y="${my}" width="${ancho}" height="${altoPlan}" rx="2" fill="#fffdf8" stroke="#1c1915" stroke-width="3"/>
+      ${esquineroForma}
+      <rect x="${mx}" y="${my + df}" width="${dl}" height="${vueltaH}" fill="#f7f3ea" stroke="#1c1915" stroke-width="2"/>
+      <rect x="${xTarja}" y="${my}" width="${wt}" height="${df}" fill="#fff" stroke="#1c1915" stroke-width="2"/>
+      <text x="${mx + dl + wt / 2}" y="${my + df / 2}" text-anchor="middle" fill="#1c1915" font-size="17" font-family="sans-serif">Cajón 1 · frente</text>
+      <text x="${mx + dl / 2}" y="${my + df / 2}" text-anchor="middle" fill="#1c1915" font-size="15" font-family="sans-serif">Esquinero</text>
+      <text x="${mx + dl / 2}" y="${my + df + vueltaH / 2}" text-anchor="middle" transform="rotate(-90 ${mx + dl / 2} ${my + df + vueltaH / 2})" fill="#1c1915" font-size="16" font-family="sans-serif">Cajón 2</text>
+      ${lineaCota(mx, my - 42, mx + ancho, my - 42, `${(frente / 10).toFixed(frente % 10 ? 1 : 0)} cm frente`)}
+      ${lineaCota(mx - 72, my, mx - 72, my + altoPlan, `${(lado / 10).toFixed(lado % 10 ? 1 : 0)} cm lado izquierdo`, true)}
+      ${lineaCota(mx - 42, my + df, mx - 42, my + altoPlan, `${(puertaVuelta / 10).toFixed(puertaVuelta % 10 ? 1 : 0)} cm puerta cajón 2`, true)}
+      ${lineaCota(mx + ancho + 32, my, mx + ancho + 32, my + df, `${(fondoFrente / 10).toFixed(fondoFrente % 10 ? 1 : 0)} cm ancho de barra`, true)}
+      ${lineaCota(xTarja, my + df + 28, xTarja + wt, my + df + 28, `${(frenteTarja / 10).toFixed(frenteTarja % 10 ? 1 : 0)} cm puertas`)}
+      <text x="350" y="548" text-anchor="middle" fill="#5e564c" font-size="14" font-family="sans-serif">Alto ${textoMedida(alto)} cm · Esquinero ${textoMedida(profundidadEsquina)} cm</text>
+    `;
+  }
+
+  function textoMedida(mm) {
+    const cm = mm / 10;
+    return cm.toFixed(Number.isInteger(cm) ? 0 : 1);
+  }
 
   const ctx = lienzo.getContext("2d");
   const HOJA_ANCHO = 1220;
@@ -22,7 +104,16 @@
   ];
   const LUZ = normalizar({ x: -0.45, y: 0.82, z: -0.4 });
   const LUZ2 = normalizar({ x: 0.55, y: 0.25, z: -0.2 });
-  const esBajos = document.body.dataset.pieza !== "columna";
+  const piezaPagina = document.body.dataset.pieza || "bajos";
+  const esBajos = piezaPagina === "bajos";
+  const esLava = piezaPagina === "lavavajillas";
+  const LAVA_CUERPO_ANCHO = 603;
+  const LAVA_CUERPO_ALTO = 846;
+  const LAVA_CUERPO_FONDO = 625;
+  const LAVA_KICK = 115;
+  const LAVA_HOYO = 63;
+  const LAVA_HOYO_PISO = 152;
+  const LAVA_HOYO_ATRAS = 102;
   const cam = { yaw: esBajos ? 0.9 : -0.72, pitch: esBajos ? -0.38 : -0.34, zoom: 1 };
   const ficha = document.getElementById("ficha");
   let seleccion = null;
@@ -39,7 +130,7 @@
   let marco = null;
   const MODULOS_VISTA = ["zoclo", "tarja", "vuelta", "esquina"];
   const vistaModulo = new Set(MODULOS_VISTA);
-  if (marcaUrl.get("ojo") && MODULOS_VISTA.includes(marcaUrl.get("ojo"))) {
+  if (esBajos && marcaUrl.get("ojo") && MODULOS_VISTA.includes(marcaUrl.get("ojo"))) {
     vistaModulo.clear();
     vistaModulo.add(marcaUrl.get("ojo"));
   }
@@ -94,7 +185,18 @@
   }
 
   function leerCm(nombre) {
-    const campo = form.elements[nombre];
+    let campo = form.elements[nombre];
+    if (typeof RadioNodeList !== "undefined" && campo instanceof RadioNodeList) {
+      const visibles = Array.from(campo).filter((nodo) =>
+        nodo && nodo.name === nombre && nodo.getClientRects().length > 0
+      );
+      campo = visibles[0] || campo[0] || null;
+    } else if (campo && typeof campo.length === "number" && typeof campo.value === "undefined") {
+      const visibles = Array.from(campo).filter((nodo) =>
+        nodo && nodo.name === nombre && nodo.getClientRects().length > 0
+      );
+      campo = visibles[0] || campo[0] || null;
+    }
     if (!campo) return { cm: null, mal: false };
     const texto = String(campo.value || "").trim().replace(",", ".");
     if (texto === "") return { cm: null, mal: false };
@@ -118,6 +220,8 @@
       ["nogal", [146, 104, 70]],
       ["roble", [196, 164, 120]],
       ["cendra", [168, 164, 156]],
+      ["oxford", [128, 130, 133]],
+      ["frosty", [232, 236, 238]],
       ["gris", [176, 174, 168]],
       ["verde", [198, 206, 190]],
       ["azul", [176, 190, 200]],
@@ -220,6 +324,27 @@
     return { x: p.x, y: origen.y + dy * c - dz * s, z: origen.z + dy * s + dz * c };
   }
 
+  function agregarHoyo(caras, xCara, cy, cz, radio) {
+    const n = 12;
+    const x = xCara - 0.8;
+    for (let i = 0; i < n; i += 1) {
+      const a0 = (i / n) * Math.PI * 2;
+      const a1 = ((i + 1) / n) * Math.PI * 2;
+      caras.push({
+        pts: [
+          { x, y: cy, z: cz },
+          { x, y: cy + Math.sin(a0) * radio, z: cz + Math.cos(a0) * radio },
+          { x, y: cy + Math.sin(a1) * radio, z: cz + Math.cos(a1) * radio },
+          { x, y: cy, z: cz },
+        ],
+        color: [36, 40, 44],
+        id: "hoyo",
+        nota: "en el lateral izquierdo",
+        modulo: "",
+      });
+    }
+  }
+
   function agregarCaja(caras, x0, y0, z0, x1, y1, z1, color, map, id, nota, modulo) {
     const esquinas = [
       [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
@@ -316,6 +441,215 @@
       metal,
       mapTapa
     );
+    return caras;
+  }
+
+  function hilerasEntre(yPiso, yTecho, espesor) {
+    const primera = yPiso + 32;
+    const ultima = yTecho - espesor - 32;
+    const hileras = [];
+    for (let y = primera; y <= ultima; y += 32) hileras.push(y);
+    return hileras;
+  }
+
+  function repartirHileras(n, hileras) {
+    if (n <= 0 || !hileras.length) return [];
+    const ultimo = hileras.length - 1;
+    const usados = [];
+    for (let i = 0; i < n; i += 1) {
+      let indice = Math.round(((i + 1) * ultimo) / (n + 1));
+      while (usados.includes(indice) && indice < ultimo) indice += 1;
+      while (usados.includes(indice) && indice > 0) indice -= 1;
+      usados.push(indice);
+    }
+    return usados.map((i) => hileras[i]).sort((a, b) => a - b);
+  }
+
+  function hileraCercana(mm, hileras) {
+    let mejor = hileras[0];
+    let dist = Math.abs(mm - mejor);
+    for (const hilera of hileras) {
+      const d = Math.abs(mm - hilera);
+      if (d < dist || (d === dist && hilera < mejor)) {
+        mejor = hilera;
+        dist = d;
+      }
+    }
+    return mejor;
+  }
+
+  function puestosEntre(n, yPiso, yTecho, espesor) {
+    if (n <= 0) return { ok: true, posiciones: [] };
+    const hileras = hilerasEntre(yPiso, yTecho, espesor);
+    if (hileras.length < n) {
+      return { ok: false, error: "No hay hileras suficientes para mover los entrepaños." };
+    }
+    const campo = form.elements.posiciones;
+    const auto = !campo || String(campo.value || "").trim() === "" || campo.dataset.auto === "1";
+    if (auto) return { ok: true, posiciones: repartirHileras(n, hileras) };
+    const partes = String(campo.value).split(";").map((p) => p.trim()).filter(Boolean);
+    if (partes.length !== n) {
+      return { ok: false, error: "Escribe una altura por entrepaño, separadas con punto y coma." };
+    }
+    const alturas = [];
+    for (const parte of partes) {
+      const limpio = parte.replace(",", ".");
+      if (!/^\d+(\.\d+)?$/.test(limpio)) {
+        return { ok: false, error: "Las posiciones van en centímetros." };
+      }
+      alturas.push(hileraCercana(Math.round(Number(limpio) * 10), hileras));
+    }
+    if (new Set(alturas).size !== n) {
+      return { ok: false, error: "Dos entrepaños caen en la misma hilera. Sepáralos al menos 3.2 cm." };
+    }
+    alturas.sort((a, b) => a - b);
+    return { ok: true, posiciones: alturas };
+  }
+
+  function contar(nombre, siVacio) {
+    const campo = form.elements[nombre];
+    if (!campo) return { valor: siVacio, mal: false };
+    const texto = String(campo.value || "").trim();
+    if (texto === "") return { valor: siVacio, mal: false };
+    if (!/^\d+$/.test(texto)) return { valor: null, mal: true };
+    return { valor: Number(texto), mal: false };
+  }
+
+  function leerLava() {
+    const alto = entero("alto");
+    const huecoAncho = entero("hueco_ancho");
+    const huecoAlto = entero("hueco_alto");
+    const fondo = entero("fondo");
+    const espesor = entero("espesor");
+    const fondoEsp = entero("fondo_esp");
+    const pedidoRepisa = entero("repisa_fondo");
+    const repisas = contar("repisas", 2);
+    const color = (form.elements.color.value || "Blanco Frosty").trim() || "Blanco Frosty";
+    const numeros = [alto, huecoAncho, huecoAlto, fondo, espesor, fondoEsp, pedidoRepisa];
+    if (numeros.some((n) => n.mal) || repisas.mal) {
+      return { ok: false, error: "Las medidas van en centímetros. Las repisas son un número entero." };
+    }
+    if ([alto, huecoAncho, huecoAlto, fondo, espesor, fondoEsp].some((n) => n.valor === null || n.valor <= 0)) {
+      return { ok: false, error: "Faltan medidas del mueble." };
+    }
+    if (espesor.valor < 9 || espesor.valor > 30) {
+      return { ok: false, error: "El espesor queda fuera de 0.9 a 3 cm." };
+    }
+    if (fondoEsp.valor < 2 || fondoEsp.valor > 12) {
+      return { ok: false, error: "El respaldo tiene que quedar entre 0.2 y 1.2 cm." };
+    }
+    if (repisas.valor < 0 || repisas.valor > 6) {
+      return { ok: false, error: "Las repisas tienen que quedar entre 0 y 6." };
+    }
+    const campoRepisa = form.elements.repisa_fondo;
+    const autoRepisa = !campoRepisa || String(campoRepisa.value || "").trim() === "" || campoRepisa.dataset.auto === "1";
+    const tira = HOJA_ANCHO - fondo.valor - 4;
+    let fondoRepisa = autoRepisa ? Math.min(fondo.valor, tira > 0 ? tira : fondo.valor) : pedidoRepisa.valor;
+    if (fondoRepisa === null || fondoRepisa <= 0) {
+      return { ok: false, error: "El fondo de la repisa tiene que ser mayor que cero." };
+    }
+    if (fondoRepisa > fondo.valor) {
+      return { ok: false, error: "La repisa no puede ser más honda que el cajón." };
+    }
+    const claro = alto.valor - huecoAlto.valor - 2 * espesor.valor;
+    if (claro <= 0) {
+      return { ok: false, error: "El alto del mueble tiene que pasar el hueco del lavavajillas y los dos techos." };
+    }
+    if (claro < repisas.valor * espesor.valor + (repisas.valor + 1) * 80) {
+      return { ok: false, error: "No caben tantos entrepaños en el alto que queda arriba del lavavajillas." };
+    }
+    const yPiso = huecoAlto.valor + espesor.valor;
+    const yTecho = alto.valor - espesor.valor;
+    const puestos = puestosEntre(repisas.valor, yPiso, yTecho, espesor.valor);
+    if (!puestos.ok) return puestos;
+    const m = {
+      clase: "lavavajillas",
+      huecoAncho: huecoAncho.valor,
+      huecoAlto: huecoAlto.valor,
+      alto: alto.valor,
+      fondo: fondo.valor,
+      espesor: espesor.valor,
+      fondoEsp: fondoEsp.valor,
+      fondoRepisa,
+      repisas: repisas.valor,
+      posiciones: puestos.posiciones,
+      color,
+      ancho: huecoAncho.valor + 2 * espesor.valor,
+    };
+    const avisos = [];
+    if (
+      m.alto > HOJA_LARGO ||
+      m.fondo > HOJA_ANCHO ||
+      m.fondoRepisa > HOJA_ANCHO ||
+      m.huecoAncho > HOJA_LARGO
+    ) {
+      avisos.push("Así se ve, pero una pieza no cabe en la hoja de 122 × 244 cm.");
+    }
+    if (m.huecoAncho - LAVA_CUERPO_ANCHO < 4) {
+      avisos.push("El aparato mide 60.3 cm de ancho. El manual pide al menos 0.2 cm por lado.");
+    }
+    if (m.huecoAlto < 864) avisos.push("El corte pide al menos 86.4 cm de alto libre.");
+    if (m.fondo < 610) avisos.push("El manual pide al menos 61 cm de fondo.");
+    const sale = Math.max(0, LAVA_CUERPO_FONDO - m.fondo);
+    m.texto = `Mueble de ${textoCm(m.alto)} cm. Hueco ${textoCm(m.huecoAncho)} × ${textoCm(m.huecoAlto)} × ${textoCm(m.fondo)} cm. El aparato mide 60.3 cm y se sienta en el piso.`;
+    if (sale > 0) m.texto += ` La puerta sale ${textoCm(sale)} cm al frente.`;
+    if (m.posiciones.length) {
+      const alturas = m.posiciones.map((p) => `${textoCm(p)} cm`).join(" y ");
+      m.texto += ` Arriba, ${m.repisas} entrepaños a ${textoCm(m.fondoRepisa)} cm de fondo, a ${alturas} del piso. Se mueven de hilera.`;
+    }
+    return { ok: true, modelo: m, avisos };
+  }
+
+  function modeloLava(m, abrir) {
+    const e = m.espesor;
+    const w = m.ancho;
+    const h = m.alto;
+    const d = m.fondo;
+    const mel = colorDe(m.color);
+    const metal = [168, 172, 176];
+    const puertaColor = [198, 202, 206];
+    const tina = [92, 98, 104];
+    const caras = [];
+    const ang = -((abrir / 100) * 1.15);
+    const zFrente = d - LAVA_CUERPO_FONDO;
+    const margen = (m.huecoAncho - LAVA_CUERPO_ANCHO) / 2;
+    const x0 = e + margen;
+    const x1 = x0 + LAVA_CUERPO_ANCHO;
+    const yCuerpo = LAVA_CUERPO_ALTO;
+    const yPiso = m.huecoAlto + e;
+    const yTecho = h - e;
+    const prof = m.fondoRepisa;
+
+    agregarCaja(caras, 0, 0, 0, e, h, d, mel, null, "Lateral lavavajillas", "el izquierdo");
+    if (d > LAVA_HOYO_ATRAS + LAVA_HOYO && h > LAVA_HOYO_PISO + LAVA_HOYO) {
+      agregarHoyo(caras, 0, LAVA_HOYO_PISO, LAVA_HOYO_ATRAS, LAVA_HOYO / 2);
+    }
+    agregarCaja(caras, w - e, 0, 0, w, h, d, mel, null, "Lateral lavavajillas", "el derecho");
+    agregarCaja(caras, e, m.huecoAlto, 0, w - e, yPiso, prof, mel, null, "Techo lavavajillas");
+    agregarCaja(caras, e, yTecho, 0, w - e, h, prof, mel, null, "Techo entrepaños");
+    for (const cursor of m.posiciones || []) {
+      agregarCaja(caras, e + 1, cursor, 0, w - e - 1, cursor + e, prof, mel, null, "Entrepaño");
+    }
+    if (yTecho - yPiso > 44) {
+      const zFondo = prof + m.fondoEsp <= d ? prof : prof - m.fondoEsp;
+      agregarCaja(
+        caras,
+        e + 2,
+        yPiso + 2,
+        zFondo,
+        w - e - 2,
+        yTecho - 2,
+        zFondo + m.fondoEsp,
+        mel.map((c) => Math.round(c * 0.9)),
+        null,
+        "Respaldo entrepaños"
+      );
+    }
+
+    agregarCaja(caras, x0 + 14, 0, zFrente + 24, x1 - 14, yCuerpo - 8, d - 8, tina, null, "aparato");
+    const mapPuerta = (p) => rotarX(p, { x: 0, y: LAVA_KICK, z: zFrente }, ang);
+    agregarCaja(caras, x0, 0, zFrente - 22, x1, yCuerpo, zFrente, puertaColor, mapPuerta, "aparato");
+    agregarCaja(caras, x0 + 18, yCuerpo - 78, zFrente - 30, x1 - 18, yCuerpo - 62, zFrente - 22, metal, mapPuerta, "aparato");
     return caras;
   }
 
@@ -536,6 +870,17 @@
   }
 
   function marcoDe(m) {
+    if (m.clase === "lavavajillas") {
+      const z0 = Math.min(0, m.fondo - LAVA_CUERPO_FONDO - 30);
+      return {
+        x0: 0,
+        y0: 0,
+        z0,
+        ancho: m.ancho,
+        alto: m.alto,
+        fondo: m.fondo - z0,
+      };
+    }
     if (m.clase !== "bajos" || todosVisibles()) {
       return { x0: 0, y0: 0, z0: 0, ancho: m.ancho, alto: m.alto, fondo: m.fondo };
     }
@@ -663,10 +1008,10 @@
     const nombreArm = "Zoclo marco cajón 1";
     const editLeg = medidaEscrita(nombreLeg);
     const editArm = medidaEscrita(nombreArm);
-    const ancho2 = Math.round(campoNumero("marco_a_2", 500));
-    const ancho1 = Math.round(campoNumero("marco_a_1", 500));
-    const legW = editLeg ? editLeg[1] : (ancho2 > 0 ? ancho2 : 500);
-    const armW = editArm ? editArm[1] : (ancho1 > 0 ? ancho1 : 500);
+    const ancho2 = Math.round(campoNumero("marco_a_2", Math.max(40, fv - pie)));
+    const ancho1 = Math.round(campoNumero("marco_a_1", Math.max(40, m.fondoBarra - pie)));
+    const legW = editLeg ? editLeg[1] : (ancho2 > 0 ? ancho2 : Math.max(40, fv - pie));
+    const armW = editArm ? editArm[1] : (ancho1 > 0 ? ancho1 : Math.max(40, m.fondoBarra - pie));
     const legL = editLeg ? editLeg[0] : largoMarco("marco_l_2", proy + pie + legW - 10);
     const armL = editArm ? editArm[0] : largoMarco("marco_l_1", m.anchoTarja + pie - 10);
     // La puerta del cajón 2 está en x = fv. Las del cajón 1, en z = proy.
@@ -749,6 +1094,38 @@
     );
   }
 
+  function cotasLava(m, vista) {
+    const w = m.ancho;
+    const h = m.alto;
+    const d = m.fondo;
+    const e = m.espesor;
+    const yHueco = m.huecoAlto;
+    cota({ x: 0, y: h, z: 0 }, { x: w, y: h, z: 0 }, { x: 0, y: h, z: -70 }, { x: w, y: h, z: -70 }, w, vista, m);
+    cota(
+      { x: e, y: yHueco * 0.55, z: 0 },
+      { x: w - e, y: yHueco * 0.55, z: 0 },
+      { x: e, y: yHueco * 0.55, z: -36 },
+      { x: w - e, y: yHueco * 0.55, z: -36 },
+      m.huecoAncho,
+      vista,
+      m
+    );
+    cota({ x: w, y: 0, z: 0 }, { x: w, y: h, z: 0 }, { x: w + 90, y: 0, z: 0 }, { x: w + 90, y: h, z: 0 }, h, vista, m);
+    cota({ x: e, y: 0, z: 0 }, { x: e, y: yHueco, z: 0 }, { x: -70, y: 0, z: 0 }, { x: -70, y: yHueco, z: 0 }, yHueco, vista, m);
+    cota({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: d }, { x: -80, y: 0, z: 0 }, { x: -80, y: 0, z: d }, d, vista, m);
+    if (m.fondoRepisa !== d) {
+      cota(
+        { x: w, y: h - e, z: 0 },
+        { x: w, y: h - e, z: m.fondoRepisa },
+        { x: w + 46, y: h - e, z: 0 },
+        { x: w + 46, y: h - e, z: m.fondoRepisa },
+        m.fondoRepisa,
+        vista,
+        m
+      );
+    }
+  }
+
   function leerBajos() {
     const tipo = form.elements.tipo ? form.elements.tipo.value : "cocina";
     if (tipo === "bano" || tipo === "closet") {
@@ -757,9 +1134,11 @@
         error: "El baño y el clóset todavía no están dibujados. En esos muebles el zoclo también va, y no se quita.",
       };
     }
-    const largoBarra = entero("largo_barra");
+    const paredA = entero("largo_pared_a");
+    const paredB = entero("largo_pared_b");
+    const largoBarra = paredA.valor !== null ? paredA : entero("largo_barra");
     const fondoBarra = entero("fondo_barra");
-    const largoVuelta = entero("largo_vuelta");
+    const largoVuelta = paredB.valor !== null ? paredB : entero("largo_vuelta");
     const fondoVuelta = entero("fondo_vuelta");
     const anchoTarja = entero("ancho_tarja");
     const puertaVuelta = entero("puerta_vuelta");
@@ -770,6 +1149,7 @@
     const holgura = entero("holgura");
     const entre = entero("entre_desde");
     const numeros = [
+      paredA, paredB,
       largoBarra, fondoBarra, largoVuelta, fondoVuelta, anchoTarja, puertaVuelta,
       altoBarra, espesor, fondoEsp, zoclo, holgura, entre,
     ];
@@ -888,7 +1268,9 @@
     function pisoTecho(x0, x1, z0, z1, clave) {
       agregarCaja(caras, x0, m.zoclo, z0, x1, m.zoclo + e, z1, mel, null, `Piso ${clave}`);
       agregarCaja(caras, x0, m.shelfTop - e, z0, x1, m.shelfTop, z1, mel, null, `Entrepaño ${clave}`);
-      agregarCaja(caras, x0, h - e, z0, x1, h, z1, mel, null, `Techo ${clave}`);
+      if (clave !== "tarja") {
+        agregarCaja(caras, x0, h - e, z0, x1, h, z1, mel, null, `Techo ${clave}`);
+      }
     }
 
     function respaldo(x0, y0, z0, x1, y1, z1, id) {
@@ -1013,7 +1395,7 @@
     marco = null;
     const vista = prepararLienzo();
     pintarFondo(vista);
-    const leido = document.body.dataset.pieza === "columna" ? leerColumna() : leerBajos();
+    const leido = esLava ? leerLava() : esBajos ? leerBajos() : leerColumna();
     if (!leido.ok) {
       ctx.fillStyle = "#5c5348";
       ctx.font = "18px Palatino, serif";
@@ -1050,7 +1432,7 @@
     }
     if (!editando) ajusteEdicion = null;
     const abrir = Number(apertura.value);
-    const piezas = m.clase === "bajos" ? modeloBajos(m, abrir) : modelo3d(m, abrir);
+    const piezas = m.clase === "bajos" ? modeloBajos(m, abrir) : m.clase === "lavavajillas" ? modeloLava(m, abrir) : modelo3d(m, abrir);
     const box = marco;
     const suelo = [
       { x: -m.ancho, y: -6, z: -m.fondo },
@@ -1151,6 +1533,8 @@
         }
       }
       cotasVisibles(m, vista);
+    } else if (m.clase === "lavavajillas") {
+      cotasLava(m, vista);
     } else {
       cotasColumna(m, vista);
     }
@@ -1158,7 +1542,7 @@
     const extra = leido.avisos.length ? ` ${leido.avisos[0]}` : "";
     const base = m.texto || `Ancho exterior ${textoCm(m.ancho)} cm · Alto ${textoCm(m.alto)} cm · Fondo ${textoCm(m.fondo)} cm.`;
     const nombresVista = { zoclo: "el zoclo", tarja: "el cajón 1", vuelta: "el cajón 2", esquina: "el esquinero" };
-    const filtro = todosVisibles()
+    const filtro = !esBajos || todosVisibles()
       ? ""
       : `Viendo ${MODULOS_VISTA.filter((id) => vistaModulo.has(id)).map((id) => nombresVista[id]).join(" y ")}. `;
     const edicion = editando ? "Editar: arrastra una cota, o cambia los centímetros de una pieza. Esa medida ya incluye el espesor. " : "";
@@ -1228,6 +1612,20 @@
     const nuevo = doc.getElementById("resultado");
     const actual = document.getElementById("resultado");
     if (nuevo && actual) actual.replaceWith(nuevo);
+    const nuevoRepisa = doc.querySelector('input[name="repisa_fondo"]');
+    const actualRepisa = form.elements.repisa_fondo;
+    if (nuevoRepisa && actualRepisa && actualRepisa.dataset.auto === "1") {
+      actualRepisa.value = nuevoRepisa.value;
+      if (nuevoRepisa.dataset.auto === "1") actualRepisa.dataset.auto = "1";
+      else delete actualRepisa.dataset.auto;
+    }
+    const nuevoPuesto = doc.querySelector('input[name="posiciones"]');
+    const actualPuesto = form.elements.posiciones;
+    if (nuevoPuesto && actualPuesto && actualPuesto.dataset.auto === "1") {
+      actualPuesto.value = nuevoPuesto.value;
+      if (nuevoPuesto.dataset.auto === "1") actualPuesto.dataset.auto = "1";
+      else delete actualPuesto.dataset.auto;
+    }
     const nuevoBanner = doc.getElementById("banner");
     const banner = document.getElementById("banner");
     if (nuevoBanner && banner) banner.innerHTML = nuevoBanner.innerHTML;
@@ -1319,6 +1717,7 @@
       boton.setAttribute("aria-pressed", vistaModulo.has(boton.dataset.ojo) ? "true" : "false");
     });
     document.querySelectorAll("section.parte[data-modulo], #modulos [data-modulo], svg .zona[data-modulo]").forEach((nodo) => {
+      if (!MODULOS_VISTA.includes(nodo.dataset.modulo)) return;
       nodo.classList.toggle("oculto", !vistaModulo.has(nodo.dataset.modulo));
     });
   }
@@ -1328,6 +1727,8 @@
       cubierta: "La cubierta gris no es una tabla. No entra en el despiece.",
       tina: "La tarja dibujada no es una tabla. No entra en el despiece.",
       jaladera: "La jaladera no es una tabla. No entra en el despiece.",
+      aparato: "El lavavajillas no se corta. Mide 60.3 cm de ancho y 62.5 cm de fondo. Con las patas retraídas llega a 85.4 cm. El cuerpo llega a 84.6 cm. Se sienta en el piso.",
+      hoyo: "Hoyo de 6.3 cm en el lateral izquierdo. El centro queda a 15.2 cm del piso y a 10.2 cm de atrás. Por ahí pasan la manguera, el desagüe y el cable, con las conexiones puestas. No se hace en el corte. Márcalo con el aparato en su lugar.",
     };
     if (!seleccion) return "Toca un mueble, una tabla del dibujo o una fila del despiece.";
     if (seleccion.tipo === "nota" || sueltas[seleccion.id]) return sueltas[seleccion.id] || seleccion.id;
@@ -1342,6 +1743,8 @@
         tarja: "Cajón 1: el de la tarja, al frente, con dos puertas. Se sienta sobre su marco de pino.",
         vuelta: "Cajón 2: el de la vuelta, con una puerta y el fijo de la punta. Comparte el marco de pino con el esquinero.",
         esquina: "Esquinero: el cuadro de la esquina. No tiene puerta. Va sobre el mismo marco de pino del cajón 2.",
+        cajon: "Cajón del lavavajillas. Laterales del piso al techo y el techo del hueco. El aparato se sienta en el piso y no entra en el corte.",
+        repisa: "Entrepaños de arriba. Van sueltos, en soportes, para moverlos de altura. El techo sí va fijo.",
       }[seleccion.id] || "";
     }
     const fila = document.querySelector(`tr[data-tabla="${CSS.escape(seleccion.id)}"]`);
@@ -1355,6 +1758,8 @@
           tarja: "cajón 1, el de la tarja",
           vuelta: "cajón 2, el de la vuelta",
           esquina: "esquinero, el de la esquina sin puerta",
+          cajon: "cajón del lavavajillas",
+          repisa: "mueble de entrepaños",
         }[fila.dataset.modulo] || "mueble";
     const textoCelda = (celda) => {
       if (!celda) return "";
@@ -1364,7 +1769,10 @@
     const cant = Number(textoCelda(td[1]));
     const cuantas = cant > 1 ? ` En el despiece son ${cant} tablas iguales.` : "";
     const cual = seleccion.nota ? `, ${seleccion.nota}` : "";
-    return `${td[0].textContent}${cual}: ${textoCelda(td[2])} × ${textoCelda(td[3])} cm, espesor ${textoCelda(td[4])} cm. Va en el ${donde}.${cuantas}`;
+    const hoyo = seleccion.nota === "el izquierdo" && donde === "cajón del lavavajillas"
+      ? " El hoyo de 6.3 cm va en este lateral, a 15.2 cm del piso y a 10.2 cm de atrás."
+      : "";
+    return `${td[0].textContent}${cual}: ${textoCelda(td[2])} × ${textoCelda(td[3])} cm, espesor ${textoCelda(td[4])} cm. Va en el ${donde}.${cuantas}${hoyo}`;
   }
 
   function marcarFila(conScroll) {
@@ -1418,7 +1826,7 @@
       elegir(null);
       return;
     }
-    if (mejor.id === "cubierta" || mejor.id === "tina" || mejor.id === "jaladera") {
+    if (mejor.id === "cubierta" || mejor.id === "tina" || mejor.id === "jaladera" || mejor.id === "aparato") {
       elegir({ tipo: "nota", id: mejor.id, nota: "" });
       return;
     }
@@ -1431,6 +1839,14 @@
   }
 
   function camposDeEspacio() {
+    if (esLava) {
+      const campos = ["alto", "hueco_ancho", "hueco_alto", "fondo"];
+      const repisa = form.elements.repisa_fondo;
+      if (repisa && String(repisa.value || "").trim() !== "" && repisa.dataset.auto !== "1") {
+        campos.push("repisa_fondo");
+      }
+      return campos;
+    }
     if (!esBajos) {
       const campos = ["alto", "fondo", "zoclo", "hueco_ancho", "hueco_alto", "hueco_desde"];
       const fondoHorno = form.elements.hueco_fondo;
@@ -1514,7 +1930,7 @@
     const foto = proporcionar(arrastre.base, factor);
     aplicarFoto(foto);
     if (form.elements.medidas) form.elements.medidas.value = "";
-    const leido = esBajos ? leerBajos() : leerColumna();
+    const leido = esLava ? leerLava() : esBajos ? leerBajos() : leerColumna();
     if (!leido.ok || !previa) {
       if (previa) aplicarFoto(previa);
       return;
@@ -1531,7 +1947,12 @@
       if (String(el.value).trim() === "") el.dataset.auto = "1";
       else delete el.dataset.auto;
     }
+    if (el.name === "repisa_fondo" || el.name === "posiciones") {
+      if (String(el.value).trim() === "") el.dataset.auto = "1";
+      else delete el.dataset.auto;
+    }
     if (CAMPOS_ZOCLO.includes(el.name)) limpiarMedidasZoclo();
+    actualizarCroquis();
     dibujar();
     programarLista();
   });
@@ -1612,9 +2033,12 @@
       alternarOjo(ojo.dataset.ojo);
       return;
     }
-    if (ev.target.closest("[data-carpintero]")) {
+    const botonPdf = ev.target.closest("[data-carpintero]");
+    if (botonPdf) {
+      const cual = botonPdf.dataset.carpintero || "zoclo";
       const params = paramsDelPlano();
-      params.set("carpintero", "pdf");
+      if (cual === "corte") params.set("corte", "pdf");
+      else params.set("carpintero", "pdf");
       const ficha = document.getElementById("ficha");
       fetch("/?" + params.toString()).then((res) => {
         const tipo = res.headers.get("Content-Type") || "";
@@ -1624,13 +2048,19 @@
         const enlace = document.createElement("a");
         const url = URL.createObjectURL(blob);
         enlace.href = url;
-        enlace.download = "zoclo.pdf";
+        enlace.download = cual === "lavavajillas" ? "lavavajillas.pdf" : cual === "corte" ? "corte.pdf" : "zoclo.pdf";
         document.body.appendChild(enlace);
         enlace.click();
         enlace.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
       }).catch(() => {
-        if (ficha) ficha.textContent = "El zoclo todavía no se arma. Revisa las medidas y vuelve a pedir el PDF.";
+        if (ficha) {
+          ficha.textContent = cual === "lavavajillas"
+            ? "Este mueble todavía no se arma. Revisa las medidas y vuelve a pedir el PDF."
+            : cual === "corte"
+              ? "Este corte todavía no sale. Revisa las medidas y vuelve a pedir el PDF."
+              : "El zoclo todavía no se arma. Revisa las medidas y vuelve a pedir el PDF.";
+        }
       });
       return;
     }
@@ -1649,7 +2079,7 @@
     dibujar();
   }, { passive: false });
   function ponerVista(nombre) {
-    const bajos = document.body.dataset.pieza !== "columna";
+    const bajos = esBajos;
     if (nombre === "frente") {
       cam.yaw = bajos ? 0.05 : 0;
       cam.pitch = bajos ? -0.22 : -0.08;
@@ -1693,7 +2123,19 @@
   }
   pintarEditar();
 
+  const botonCroquis = document.getElementById("croquis-ojo");
+  const croquisPlano = document.getElementById("croquis-plano");
+  if (botonCroquis && croquisPlano) {
+    botonCroquis.addEventListener("click", () => {
+      const visible = botonCroquis.getAttribute("aria-pressed") !== "true";
+      botonCroquis.setAttribute("aria-pressed", visible ? "true" : "false");
+      croquisPlano.hidden = !visible;
+      if (visible) actualizarCroquis();
+    });
+  }
+
   pintarOjos();
   marcarFila(false);
+  actualizarCroquis();
   dibujar();
 })();

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from math import ceil, hypot
+from math import ceil, hypot, isfinite
 
 HOJA_ANCHO = 1220
 HOJA_LARGO = 2440
@@ -59,7 +59,9 @@ def cm_a_mm(texto: str) -> str:
         return ""
     try:
         valor = float(limpio)
-    except ValueError:
+    except (TypeError, ValueError):
+        return str(texto).strip()
+    if not isfinite(valor):
         return str(texto).strip()
     return str(int(round(valor * 10)))
 
@@ -407,7 +409,6 @@ def calcular_columna(datos: dict) -> Resultado:
         errores.append("Falta la holgura.")
     elif holgura is not None and holgura < 0:
         errores.append("La holgura no puede ser negativa.")
-
     hueco_ancho = _entero(datos.get("hueco_ancho"), "el ancho del hueco", errores)
     hueco_alto = _entero(datos.get("hueco_alto"), "el alto del hueco", errores)
     hueco_desde = _entero(datos.get("hueco_desde"), "la altura donde empieza el hueco", errores)
@@ -759,6 +760,47 @@ def calcular_bajos(datos: dict) -> Resultado:
         tipo = "bano"
     if tipo not in ("cocina", "bano", "closet"):
         return Resultado(listo=False, errores=["Elige cocina, baño o clóset."])
+    distribucion = str(datos.get("distribucion") or "l").strip().lower()
+    if distribucion not in ("recta", "l", "u"):
+        return Resultado(listo=False, errores=["Elige una distribución recta, en L o en U."])
+    if distribucion in ("recta", "u"):
+        nombre = "recta" if distribucion == "recta" else "en U"
+        def medida_espacio(campo: str) -> int:
+            try:
+                valor = int(datos.get(campo) or 0)
+            except (TypeError, ValueError, OverflowError):
+                return 0
+            return valor
+        return Resultado(
+            listo=False,
+            avisos=[
+                f"La distribución {nombre} quedó registrada, pero este bloque todavía no genera cortes automáticos "
+                "para ese plano. Usa distribución en L para obtener el despiece completo."
+            ],
+            esquema={
+                "distribucion": distribucion,
+                "largo_pared_a": medida_espacio("largo_pared_a"),
+                "largo_pared_b": medida_espacio("largo_pared_b"),
+                "largo_pared_c": medida_espacio("largo_pared_c"),
+            },
+        )
+    if distribucion == "l":
+        def medir_tramo(campo: str) -> int | None:
+            texto = str(datos.get(campo) or "").strip()
+            if not texto:
+                return None
+            try:
+                valor = int(texto)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return valor if valor >= 400 else valor * 10
+
+        tramo_a = medir_tramo("largo_pared_a")
+        tramo_b = medir_tramo("largo_pared_b")
+        if tramo_a is not None and tramo_a > 0:
+            datos["largo_barra"] = str(tramo_a)
+        if tramo_b is not None and tramo_b > 0:
+            datos["largo_vuelta"] = str(tramo_b)
     if tipo != "cocina":
         return Resultado(
             listo=False,
@@ -783,6 +825,11 @@ def calcular_bajos(datos: dict) -> Resultado:
         errores.append("Falta la holgura.")
     elif holgura is not None and holgura < 0:
         errores.append("La holgura no puede ser negativa.")
+    profundidad_esquina = _entero(datos.get("profundidad_esquina"), "la profundidad del esquinero", errores)
+    if profundidad_esquina is None:
+        profundidad_esquina = HUECO_PIE * 9
+    elif profundidad_esquina <= 0:
+        errores.append("La profundidad del esquinero tiene que ser mayor que cero.")
     entre = _entero(datos.get("entre_desde"), "la altura del entrepaño", errores)
     if entre is not None and entre <= 0:
         errores.append("La altura del entrepaño tiene que ser mayor que cero.")
@@ -953,11 +1000,13 @@ def calcular_bajos(datos: dict) -> Resultado:
             "alto del cajón × fondo",
             nota_lateral,
         )
-        for nombre, nota in (
+        piezas_horizontales = [
             (f"Piso {clave}", nota_piso),
             (f"Entrepaño {clave}", nota_entre),
-            (f"Techo {clave}", nota_techo),
-        ):
+        ]
+        if clave != "tarja":
+            piezas_horizontales.append((f"Techo {clave}", nota_techo))
+        for nombre, nota in piezas_horizontales:
             agregar(
                 nombre,
                 1,
@@ -1051,8 +1100,22 @@ def calcular_bajos(datos: dict) -> Resultado:
         return numero, False
 
     pino = opcion("pino_esp", ESPESOR_PINO, "El espesor del pino", 8, 40, en_cm=True)
-    ancho_2 = opcion("marco_a_2", ANCHO_MARCO, "El ancho del marco del cajón 2", 40, 2000, en_cm=True)
-    ancho_1 = opcion("marco_a_1", ANCHO_MARCO, "El ancho del marco del cajón 1", 40, 2000, en_cm=True)
+
+    def ancho_marco_interior(clave: str, fondo: int, nombre: str) -> int | None:
+        """El marco sale del fondo interior menos el hueco libre del pie."""
+        defecto = fondo - pie
+        if clave not in datos or datos.get(clave) is None or str(datos.get(clave)).strip() == "":
+            return defecto
+        numero = _entero(datos.get(clave), nombre, errores)
+        if numero is None:
+            return None
+        if numero < 40 or numero > 2000:
+            errores.append(f"{nombre} tiene que quedar entre {texto_cm(40)} y {texto_cm(2000)} cm.")
+            return None
+        return numero
+
+    ancho_2 = ancho_marco_interior("marco_a_2", fondo_vuelta, "El ancho del marco del cajón 2")
+    ancho_1 = ancho_marco_interior("marco_a_1", fondo_barra, "El ancho del marco del cajón 1")
     n2 = opcion("ref_2", 4, "Los refuerzos del cajón 2", 0, 30)
     n1 = opcion("ref_1", 4, "Los refuerzos del cajón 1", 0, 30)
     if None not in (pino, ancho_2, ancho_1, n2, n1):
@@ -1084,7 +1147,7 @@ def calcular_bajos(datos: dict) -> Resultado:
         proyeccion,
         fondo_vuelta,
         [puerta_vuelta],
-        "Del zoclo a la cara de arriba. Se sienta sobre el zoclo que comparte con el esquinero. El canto va hacia la cocina.",
+        "Módulo separado del esquinero. Del zoclo a la cara de arriba. Se une a él por un solo lateral común y comparte zoclo.",
     )
     if fijo >= 40:
         agregar(
@@ -1104,7 +1167,7 @@ def calcular_bajos(datos: dict) -> Resultado:
         fondo_vuelta,
         fondo_barra,
         [],
-        "Cajón ciego. Se sienta sobre el mismo zoclo del cajón 2. Sus caras dan contra la tarja y contra la vuelta. Sin canto visto.",
+        "Módulo separado ciego. Se sienta sobre el mismo zoclo del cajón 2 y se une al lateral de este sin repetir tableros. Sus caras dan contra la tarja y contra la vuelta.",
     )
     if errores:
         return Resultado(listo=False, errores=errores)
@@ -1129,6 +1192,15 @@ def calcular_bajos(datos: dict) -> Resultado:
         )
     if fondo_barra < 550 or fondo_vuelta < 550:
         avisos.append("Un fondo quedó debajo de 55 cm. En un bajo se usan más seguido 55 a 60 cm.")
+    avisos.append(
+        f"Cajón 1: cuerpo de 70 cm de alto sobre el zoclo de {texto_cm(zoclo)} cm. "
+        "No lleva tablero superior; la cubierta va aparte. Dos puertas con melamina de 1.5 cm."
+    )
+    avisos.append(
+        "Cajón 2 y esquinero: son dos módulos separados que se conectan entre sí. "
+        "Comparten el marco de pino, el borde de unión y la altura de 70 cm. "
+        "No se repite el lateral común; el esquinero queda ciego y el cajón 2 lleva una puerta."
+    )
     if alto_puerta != 720:
         aviso_puerta = (
             f"Las puertas quedan de {texto_cm(alto_puerta)} cm de alto. "
@@ -1217,7 +1289,10 @@ def calcular_bajos(datos: dict) -> Resultado:
         pistones=0,
         confirmat=3 * (3 * 2 * 3),
         esquema={
+            "distribucion": distribucion,
             "alto": alto_barra,
+            "alto_cajon": alto_cajon,
+            "modulos_conectados": ["cajón 2", "esquinero"],
             "ancho": suma,
             "fondo_total": largo_vuelta,
             "fondo_barra": fondo_barra,
@@ -1235,16 +1310,557 @@ def calcular_bajos(datos: dict) -> Resultado:
             "interior_vuelta": proyeccion - 2 * espesor,
             "interior_esquina": fondo_vuelta - 2 * espesor,
             "largo_barra": largo_barra,
+            "profundidad_esquina": profundidad_esquina,
             "zoclo_pie": pie,
             "pino_esp": pino,
             "marco_a_2": ancho_2,
+            "marco_a_2_auto": "marco_a_2" not in datos or datos.get("marco_a_2") is None or str(datos.get("marco_a_2")).strip() == "",
             "marco_l_2": largo_leg,
             "marco_l_2_auto": auto_2,
             "ref_2": n2,
             "marco_a_1": ancho_1,
+            "marco_a_1_auto": "marco_a_1" not in datos or datos.get("marco_a_1") is None or str(datos.get("marco_a_1")).strip() == "",
             "marco_l_1": largo_arm,
             "marco_l_1_auto": auto_1,
             "ref_1": n1,
             "pino_mm": metros_pino(piezas),
+        },
+    )
+
+
+# LG LDP6810SS. El cuerpo es el aparato. 85.4 cm es la altura con las
+# patas retraídas. El corte del gabinete es 86.4 cm. Este plano usa 87.
+# Nada de esto es una tabla de melamina.
+LAVA_ANCHO = 603
+LAVA_ALTO = 846
+LAVA_ALTO_LIBRE = 854
+LAVA_CORTE_ALTO = 864
+LAVA_HUECO_ALTO = 870
+LAVA_FONDO = 625
+LAVA_HUECO_ANCHO = 610
+LAVA_HUECO_FONDO = 610
+LAVA_ALTO_MUEBLE = 2440
+LAVA_HOLGURA_LADO = 2
+# Hileras para mover los entrepaños. 32 mm es el paso de sistema 32.
+# 37 mm es el retranqueo: la hilera de enfrente sale del canto frontal
+# del lateral, y la de atrás sale del canto de atrás del entrepaño.
+# 2 mm es la holgura del ancho del entrepaño dentro del hueco.
+PASO_ENTRE = 32
+HOLGURA_ENTRE = 32
+INSET_ENTRE = 37
+HOLGURA_ANCHO_ENTRE = 2
+# En la vista de lado del manual hay otra profundidad, de 676 a 681 mm.
+# No es la apertura del gabinete. La ficha dice 625 mm y el dibujo del
+# hueco pide al menos 610 mm.
+LAVA_FONDO_LADO = (676, 681)
+# Hoyo del manual en el lateral izquierdo, visto de frente.
+# 6.3 cm es la sierra de 2 1/2". El centro queda a 6" del piso y a 4" de atrás.
+LAVA_HOYO = 63
+LAVA_HOYO_PISO = 152
+LAVA_HOYO_ATRAS = 102
+SIERRA_HOJA = 4
+
+
+def acomodar_melamina(alto: int, fondo: int, tablas: list[tuple[str, int, int]]) -> list[list[dict]]:
+    """Dos laterales a lo largo de la hoja. Lo demás cae en la tira de al lado.
+
+    Cada pieza trae nombre, x, y, w, h en milímetros. y corre por los 244 cm.
+    Entre corte y corte queda la sierra. El primer número de la tabla es el
+    lado del frente.
+    """
+    if alto > HOJA_LARGO or fondo > HOJA_ANCHO or alto <= 0 or fondo <= 0:
+        return []
+    hojas: list[list[dict]] = []
+    libres: list[dict] = []
+
+    def colocar(nombre: str, frente: int, fondo_pieza: int, hoja: int, x: int, y: int, w: int, h: int) -> None:
+        lado = "lado" if h == frente else "abajo"
+        hojas[hoja].append({
+            "nombre": nombre,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "frente": lado,
+        })
+
+    def poner(nombre: str, a: int, b: int) -> bool:
+        for k, libre in enumerate(libres):
+            wa, la = libre["w"], libre["h"]
+            opciones = []
+            if a <= wa and b <= la:
+                opciones.append((a, b))
+            if b <= wa and a <= la and (b, a) not in opciones:
+                opciones.append((b, a))
+            if not opciones:
+                continue
+            pw, pl = min(opciones, key=lambda lado: lado[1])
+            libres.pop(k)
+            x, y = libre["x"], libre["y"]
+            colocar(nombre, a, b, libre["hoja"], x, y, pw, pl)
+            if la - pl - SIERRA_HOJA > 0:
+                libres.insert(0, {
+                    "hoja": libre["hoja"],
+                    "x": x,
+                    "y": y + pl + SIERRA_HOJA,
+                    "w": wa,
+                    "h": la - pl - SIERRA_HOJA,
+                })
+            if wa - pw - SIERRA_HOJA > 0:
+                libres.insert(0, {
+                    "hoja": libre["hoja"],
+                    "x": x + pw + SIERRA_HOJA,
+                    "y": y,
+                    "w": wa - pw - SIERRA_HOJA,
+                    "h": pl,
+                })
+            return True
+        return False
+
+    if fondo * 2 + SIERRA_HOJA <= HOJA_ANCHO:
+        hojas.append([])
+        colocar("Lateral", alto, fondo, 0, 0, 0, fondo, alto)
+        colocar("Lateral", alto, fondo, 0, fondo + SIERRA_HOJA, 0, fondo, alto)
+        inicio_tira = 2 * fondo + 2 * SIERRA_HOJA
+        sobra_w = HOJA_ANCHO - inicio_tira
+        if sobra_w > 0:
+            libres.append({
+                "hoja": 0,
+                "x": inicio_tira,
+                "y": 0,
+                "w": sobra_w,
+                "h": HOJA_LARGO,
+            })
+        sobra_l = HOJA_LARGO - alto - SIERRA_HOJA
+        if sobra_l > 0:
+            libres.append({"hoja": 0, "x": 0, "y": alto + SIERRA_HOJA, "w": HOJA_ANCHO, "h": sobra_l})
+    else:
+        hojas.append([])
+        hojas.append([])
+        colocar("Lateral", alto, fondo, 0, 0, 0, fondo, alto)
+        colocar("Lateral", alto, fondo, 1, 0, 0, fondo, alto)
+        sobra_w = HOJA_ANCHO - fondo - SIERRA_HOJA
+        sobra_l = HOJA_LARGO - alto - SIERRA_HOJA
+        for indice in (0, 1):
+            if sobra_w > 0:
+                libres.append({
+                    "hoja": indice,
+                    "x": fondo + SIERRA_HOJA,
+                    "y": 0,
+                    "w": sobra_w,
+                    "h": HOJA_LARGO,
+                })
+            if sobra_l > 0:
+                libres.append({
+                    "hoja": indice,
+                    "x": 0,
+                    "y": alto + SIERRA_HOJA,
+                    "w": fondo,
+                    "h": sobra_l,
+                })
+    for nombre, a, b in tablas:
+        if poner(nombre, a, b):
+            continue
+        hojas.append([])
+        indice = len(hojas) - 1
+        libres.append({"hoja": indice, "x": 0, "y": 0, "w": HOJA_ANCHO, "h": HOJA_LARGO})
+        poner(nombre, a, b)
+    return hojas
+
+
+def cortes_lavavajillas(piezas: list) -> list[list[dict]]:
+    """El acomodo real de la melamina de este cajón. El respaldo no entra."""
+    lateral = next((p for p in piezas if p.nombre.startswith("Lateral")), None)
+    if lateral is None:
+        return []
+    tablas = []
+    for pieza in piezas:
+        if pieza.espesor != lateral.espesor or pieza.nombre.startswith("Lateral"):
+            continue
+        tablas.extend((pieza.nombre, pieza.alto, pieza.ancho) for _ in range(pieza.cantidad))
+    return acomodar_melamina(lateral.alto, lateral.ancho, tablas)
+
+
+def _hojas_lava(alto: int, fondo: int, tablas: list[tuple[int, int]]) -> int:
+    """Hojas de 122 × 244 cm para dos laterales y las tablas de arriba."""
+    nombradas = [("Tabla", a, b) for a, b in tablas]
+    return len(acomodar_melamina(alto, fondo, nombradas))
+
+
+def _hileras_entre(y_piso: int, y_techo: int, espesor: int) -> list[int]:
+    primera = y_piso + HOLGURA_ENTRE
+    ultima = y_techo - espesor - HOLGURA_ENTRE
+    if ultima < primera:
+        return []
+    return list(range(primera, ultima + 1, PASO_ENTRE))
+
+
+def _repartir_hileras(n: int, hileras: list[int]) -> list[int]:
+    if n <= 0 or not hileras:
+        return []
+    ultimo = len(hileras) - 1
+    usados: list[int] = []
+    for i in range(n):
+        indice = int(((i + 1) * ultimo) / (n + 1) + 0.5)
+        while indice in usados and indice < ultimo:
+            indice += 1
+        while indice in usados and indice > 0:
+            indice -= 1
+        usados.append(indice)
+    return sorted(hileras[i] for i in usados)
+
+
+def _hilera_cercana(mm: int, hileras: list[int]) -> int:
+    return min(hileras, key=lambda hilera: (abs(hilera - mm), hilera))
+
+
+def _pedir_posiciones(texto: str, n: int, hileras: list[int], errores: list[str]) -> list[int]:
+    partes = [parte.strip() for parte in texto.replace("\n", ";").split(";")]
+    partes = [parte for parte in partes if parte]
+    if len(partes) != n:
+        errores.append(
+            f"Hay {n} entrepaños y {len(partes)} alturas. "
+            "Escribe una altura por entrepaño, separadas con punto y coma."
+        )
+        return []
+    alturas: list[int] = []
+    for parte in partes:
+        mm = cm_a_mm(parte)
+        if not mm.isdigit():
+            errores.append(f"La posición {parte} tiene que ir en centímetros.")
+            return []
+        alturas.append(_hilera_cercana(int(mm), hileras))
+    if len(set(alturas)) != n:
+        errores.append("Dos entrepaños caen en la misma hilera. Sepáralos al menos 3.2 cm.")
+        return []
+    return sorted(alturas)
+
+
+def calcular_lavavajillas(datos: dict) -> Resultado:
+    """Columna del lavavajillas, con repisas arriba.
+
+    Los laterales van del piso hasta el alto del mueble. El aparato se
+    sienta en el piso: no hay zoclo ni piso. El techo del hueco es el
+    piso de las repisas y no le quita alto al hueco. Detrás del aparato
+    no hay fondo.
+    """
+    errores: list[str] = []
+    avisos: list[str] = []
+    alto = _pedir(datos.get("alto"), "el alto del mueble", errores)
+    hueco_ancho = _pedir(datos.get("hueco_ancho"), "el ancho del hueco", errores)
+    hueco_alto = _pedir(datos.get("hueco_alto"), "el alto del hueco", errores)
+    fondo = _pedir(datos.get("fondo"), "el fondo del cajón", errores)
+    espesor = _pedir(datos.get("espesor"), "el espesor", errores)
+    fondo_esp = _pedir(datos.get("fondo_esp"), "el espesor del respaldo", errores)
+    repisas = _entero(datos.get("repisas"), "las repisas", errores)
+    if repisas is None and not any("repisas" in e for e in errores):
+        repisas = 2
+    pedido_repisa = str(datos.get("repisa_fondo") or "").strip()
+    fondo_repisa = _pedir(pedido_repisa, "el fondo de la repisa", errores) if pedido_repisa else None
+    if errores or None in (alto, hueco_ancho, hueco_alto, fondo, espesor, fondo_esp, repisas):
+        return Resultado(listo=False, errores=errores, avisos=avisos)
+
+    if espesor < 9 or espesor > 30:
+        errores.append("El espesor del cuerpo queda fuera de 0.9 a 3 cm.")
+    if fondo_esp < 2 or fondo_esp > 12:
+        errores.append("El respaldo tiene que quedar entre 0.2 y 1.2 cm.")
+    if repisas < 0 or repisas > 6:
+        errores.append("Las repisas tienen que quedar entre 0 y 6.")
+    if errores:
+        return Resultado(listo=False, errores=errores, avisos=avisos)
+
+    tira = HOJA_ANCHO - fondo - SIERRA_HOJA
+    if fondo_repisa is None:
+        fondo_repisa = min(fondo, tira) if tira > 0 else fondo
+    if fondo_repisa <= 0:
+        errores.append("El fondo de la repisa tiene que ser mayor que cero.")
+    elif fondo_repisa > fondo:
+        errores.append("La repisa no puede ser más honda que el cajón.")
+    claro = alto - hueco_alto - 2 * espesor
+    if claro <= 0:
+        errores.append("El alto del mueble tiene que pasar el hueco del lavavajillas y los dos techos.")
+    elif claro < repisas * espesor + (repisas + 1) * 80:
+        errores.append("No caben tantos entrepaños en el alto que queda arriba del lavavajillas.")
+    y_piso = (hueco_alto or 0) + (espesor or 0)
+    y_techo = (alto or 0) - (espesor or 0)
+    hileras = _hileras_entre(y_piso, y_techo, espesor or 0) if not errores else []
+    posiciones: list[int] = []
+    if repisas and not errores:
+        if len(hileras) < repisas:
+            errores.append("No hay hileras suficientes para mover los entrepaños.")
+        else:
+            pedido = str(datos.get("posiciones") or "").strip()
+            posiciones = (
+                _pedir_posiciones(pedido, repisas, hileras, errores)
+                if pedido
+                else _repartir_hileras(repisas, hileras)
+            )
+    if errores:
+        return Resultado(listo=False, errores=errores, avisos=avisos)
+
+    ancho_exterior = hueco_ancho + 2 * espesor
+    color = str(datos.get("color") or "Blanco Frosty").strip() or "Blanco Frosty"
+    material = f"Melamina {color} {texto_cm(espesor)} cm"
+    material_fondo = f"Fondo {texto_cm(fondo_esp)} cm"
+    piezas = [
+        Pieza(
+            "Lateral lavavajillas",
+            2,
+            alto,
+            fondo,
+            espesor,
+            material,
+            "1 largo, el frente",
+            2 * alto,
+            "alto del piso al techo × fondo del cajón",
+            "Sigue de una pieza hasta los entrepaños. En la cara de adentro, arriba del lavavajillas, "
+            f"dos hileras de barrenos de 5 mm cada {texto_cm(PASO_ENTRE)} cm. "
+            f"La de enfrente queda a {texto_cm(INSET_ENTRE)} cm del canto frontal del lateral. "
+            f"La de atrás queda a {texto_cm(INSET_ENTRE)} cm del canto de atrás del entrepaño, medido sobre el fondo de la tabla. "
+            "Ahí entran los soportes para mover los entrepaños. El lavavajillas se sienta en el piso: este mueble no lleva zoclo.",
+        ),
+        Pieza(
+            "Techo lavavajillas",
+            1,
+            hueco_ancho,
+            fondo_repisa,
+            espesor,
+            material,
+            "1 largo, el frente",
+            hueco_ancho,
+            "ancho del hueco × fondo del entrepaño",
+            f"Entre los laterales. La cara de abajo queda a {texto_cm(hueco_alto)} cm del piso. Cierra el hueco. "
+            "El canto frontal va sellado. Si el aparato no trae barrera de vapor, pon cinta de aluminio en la cara de abajo. "
+            f"El aparato se fija a este techo con escuadras. Usa tornillos que no atraviesen los {texto_cm(espesor)} cm.",
+        ),
+        Pieza(
+            "Techo entrepaños",
+            1,
+            hueco_ancho,
+            fondo_repisa,
+            espesor,
+            material,
+            "1 largo, el frente",
+            hueco_ancho,
+            "ancho del hueco × fondo del entrepaño",
+            f"Entre los laterales, hasta los {texto_cm(alto)} cm. Va fijo. Ancla este techo al muro con 2 escuadras. Los entrepaños de abajo no van fijos.",
+        ),
+    ]
+    ancho_entre = hueco_ancho - HOLGURA_ANCHO_ENTRE
+    if repisas:
+        if len(posiciones) == 1:
+            donde = f"a {texto_cm(posiciones[0])} cm del piso"
+        else:
+            donde = "a " + " y a ".join(f"{texto_cm(p)} cm" for p in posiciones) + " del piso"
+        piezas.append(
+            Pieza(
+                "Entrepaño",
+                repisas,
+                ancho_entre,
+                fondo_repisa,
+                espesor,
+                material,
+                "1 largo, el frente",
+                repisas * ancho_entre,
+                "ancho del entrepaño × fondo del entrepaño",
+                "No va con confirmat. "
+                f"Mide {texto_cm(ancho_entre)} cm de ancho, {texto_cm(hueco_ancho - ancho_entre)} cm menos que el hueco, para que suba y baje sin trabarse. "
+                "Se apoya en cuatro soportes para poder cambiarlo de hilera. "
+                f"De partida, la cara de abajo queda {donde}. Van a ras del frente.",
+            )
+        )
+    respaldo_alto = claro - 4
+    respaldo_ancho = hueco_ancho - 4
+    if respaldo_alto > 40 and respaldo_ancho > 40:
+        piezas.append(
+            Pieza(
+                "Respaldo entrepaños",
+                1,
+                respaldo_alto,
+                respaldo_ancho,
+                fondo_esp,
+                material_fondo,
+                "ninguno",
+                0,
+                "alto del claro de los entrepaños × ancho del hueco",
+                "Solo detrás de los entrepaños. Detrás del lavavajillas no va fondo: por ahí pasan agua, desagüe y corriente.",
+            )
+        )
+    for pieza in piezas:
+        if not pieza.cabe():
+            errores.append(
+                f"{pieza.nombre} mide {texto_cm(pieza.alto)} × {texto_cm(pieza.ancho)} cm y no cabe en una hoja de {texto_cm(HOJA_ANCHO)} × {texto_cm(HOJA_LARGO)} cm."
+            )
+    if errores:
+        return Resultado(listo=False, errores=errores, avisos=avisos, ancho_exterior=ancho_exterior, piezas=piezas)
+
+    sobra_lados = hueco_ancho - LAVA_ANCHO
+    entra = (
+        hueco_ancho >= LAVA_HUECO_ANCHO
+        and sobra_lados >= LAVA_HOLGURA_LADO * 2
+        and hueco_alto >= LAVA_CORTE_ALTO
+        and fondo >= LAVA_HUECO_FONDO
+    )
+    if entra:
+        avisos.append(
+            "El lavavajillas entra. El corte pide al menos "
+            f"{texto_cm(LAVA_HUECO_ANCHO)} × {texto_cm(LAVA_CORTE_ALTO)} × {texto_cm(LAVA_HUECO_FONDO)} cm. "
+            f"Este hueco mide {texto_cm(hueco_ancho)} × {texto_cm(hueco_alto)} × {texto_cm(fondo)} cm. "
+            f"Con las patas retraídas el aparato mide {texto_cm(LAVA_ANCHO)} × {texto_cm(LAVA_FONDO)} × {texto_cm(LAVA_ALTO_LIBRE)} cm."
+        )
+    else:
+        avisos.append(
+            "El corte pide al menos "
+            f"{texto_cm(LAVA_HUECO_ANCHO)} cm de ancho, {texto_cm(LAVA_CORTE_ALTO)} cm de alto "
+            f"y {texto_cm(LAVA_HUECO_FONDO)} cm de fondo. Con estas medidas el aparato no entra como pide el dibujo."
+        )
+    if sobra_lados < LAVA_HOLGURA_LADO * 2:
+        avisos.append(
+            f"El aparato mide {texto_cm(LAVA_ANCHO)} cm de ancho. "
+            f"En este hueco de {texto_cm(hueco_ancho)} cm quedan {texto_cm(sobra_lados)} cm entre los dos laterales. "
+            "El manual pide al menos 0.2 cm por lado para que la puerta abra."
+        )
+    else:
+        avisos.append(
+            f"El aparato mide {texto_cm(LAVA_ANCHO)} cm de ancho y el hueco {texto_cm(hueco_ancho)} cm. "
+            f"Quedan {texto_cm(sobra_lados)} cm entre los dos laterales, más de 0.2 cm por lado."
+        )
+    if hueco_alto < LAVA_CORTE_ALTO:
+        avisos.append(
+            f"El corte pide al menos {texto_cm(LAVA_CORTE_ALTO)} cm de alto, del piso al bajo del techo. "
+            f"Este hueco tiene {texto_cm(hueco_alto)} cm. "
+            f"{texto_cm(LAVA_ALTO_LIBRE)} cm es el aparato con las patas retraídas, sin holgura para nivelarlo."
+        )
+    else:
+        avisos.append(
+            f"El alto libre es {texto_cm(hueco_alto)} cm, del piso al bajo del techo. "
+            f"El corte pide al menos {texto_cm(LAVA_CORTE_ALTO)} cm. "
+            f"Con las patas retraídas el aparato mide {texto_cm(LAVA_ALTO_LIBRE)} cm y el cuerpo llega a {texto_cm(LAVA_ALTO)} cm."
+        )
+    if fondo < LAVA_HUECO_FONDO:
+        avisos.append(
+            f"El manual pide al menos {texto_cm(LAVA_HUECO_FONDO)} cm de fondo de gabinete. Este cajón tiene {texto_cm(fondo)} cm."
+        )
+    if fondo < LAVA_FONDO:
+        avisos.append(
+            f"El aparato mide {texto_cm(LAVA_FONDO)} cm de fondo. "
+            f"Con este cajón de {texto_cm(fondo)} cm, la puerta sale {texto_cm(LAVA_FONDO - fondo)} cm al frente."
+        )
+    avisos.append(
+        "En la vista de lado el dibujo marca de "
+        f"{texto_cm(LAVA_FONDO_LADO[0])} a {texto_cm(LAVA_FONDO_LADO[1])} cm. "
+        "Esa medida no es la apertura del gabinete. La apertura sigue siendo "
+        f"{texto_cm(LAVA_HUECO_FONDO)} cm de fondo."
+    )
+    if alto == HOJA_LARGO:
+        avisos.append(
+            f"El lateral mide {texto_cm(alto)} cm, el largo completo de la hoja. No sobra largo para despuntar."
+        )
+    elif alto < HOJA_LARGO:
+        avisos.append(
+            f"El alto de {texto_cm(alto)} cm entra en la hoja de {texto_cm(HOJA_LARGO)} cm. Sobran {texto_cm(HOJA_LARGO - alto)} cm."
+        )
+    tablas = [
+        (pieza.alto, pieza.ancho)
+        for pieza in piezas
+        if pieza.espesor == espesor and not pieza.nombre.startswith("Lateral")
+        for _ in range(pieza.cantidad)
+    ]
+    hojas = _hojas_lava(alto, fondo, tablas)
+    if hojas == 2 and fondo_repisa < fondo:
+        avisos.append(
+            f"Cada lateral de {texto_cm(alto)} × {texto_cm(fondo)} cm va en una hoja. "
+            f"Al lado queda una tira de {texto_cm(tira)} cm, ya descontando la sierra. "
+            f"Los entrepaños y los techos van a {texto_cm(fondo_repisa)} cm de fondo para caber en esa tira. "
+            f"El corte sale en 2 hojas de {texto_cm(HOJA_ANCHO)} × {texto_cm(HOJA_LARGO)} cm."
+        )
+    elif hojas:
+        avisos.append(
+            f"Con estas medidas el acomodo pide {hojas} hojas de {texto_cm(HOJA_ANCHO)} × {texto_cm(HOJA_LARGO)} cm."
+        )
+    avisos.append(
+        "No lleva zoclo ni piso ni soporte abajo. El aparato se sienta en el piso. "
+        "Esos 11.5 cm de abajo son del propio lavavajillas. "
+        "El manual solo habla de quitar el soporte del gabinete en una instalación al ras. Los entrepaños empiezan encima de su techo."
+    )
+    avisos.append(
+        "El hoyo de 6.3 cm va en el lateral izquierdo, visto de frente. "
+        f"El centro queda a {texto_cm(LAVA_HOYO_PISO)} cm del piso y a {texto_cm(LAVA_HOYO_ATRAS)} cm de atrás. "
+        "No va en el corte. Se barrena al armar, con la plantilla y con el aparato en su lugar. Es uno solo. "
+        "Por ese centro pasan la manguera, el desagüe y el cable, con las conexiones puestas."
+    )
+    if repisas:
+        avisos.append(
+            f"Los entrepaños se cortan a {texto_cm(ancho_entre)} cm de ancho. "
+            f"El hueco mide {texto_cm(hueco_ancho)} cm. "
+            f"Esos {texto_cm(hueco_ancho - ancho_entre)} cm dejan que la tabla suba y baje."
+        )
+    avisos.append(
+        "Ancla el techo de arriba al muro con 2 escuadras. "
+        "El mueble no tiene piso ni zoclo, y el respaldo de 0.3 cm no lo sostiene."
+    )
+    avisos.append(
+        "Sella el canto frontal del techo del hueco. "
+        "Si el aparato no trae barrera de vapor, pon cinta de aluminio en la cara de abajo de ese techo."
+    )
+    avisos.append(
+        f"El aparato se fija con escuadras a ese techo. Usa tornillos que no atraviesen los {texto_cm(espesor)} cm."
+    )
+    if tira > 0:
+        avisos.append(
+            f"Confirma que la hoja llegue completa, de {texto_cm(HOJA_ANCHO)} × {texto_cm(HOJA_LARGO)} cm, sin orillas ya recortadas. "
+            f"En el ancho no sobra: {texto_cm(fondo)} + {texto_cm(SIERRA_HOJA)} + {texto_cm(tira)} = {texto_cm(fondo + SIERRA_HOJA + tira)}."
+        )
+    avisos.append(
+        "Va a no más de 3.65 m del fregadero, para que el desagüe alcance. "
+        "Si queda en un rincón, deja 5 cm entre el aparato y el muro de al lado. Ese muro va libre."
+    )
+    if posiciones:
+        alturas = " y ".join(f"{texto_cm(p)} cm" for p in posiciones)
+        avisos.append(
+            f"Los entrepaños van sueltos, en soportes, para moverlos. "
+            f"De partida quedan a {alturas} del piso, cada uno en una hilera distinta. "
+            f"Los barrenos son de 5 mm cada {texto_cm(PASO_ENTRE)} cm. "
+            f"La hilera de enfrente va a {texto_cm(INSET_ENTRE)} cm del canto frontal del lateral. "
+            f"La de atrás va a {texto_cm(INSET_ENTRE)} cm del canto de atrás del entrepaño, sobre el fondo de la tabla."
+        )
+    avisos.append("El lavavajillas no se manda a cortar.")
+    avisos.append("Estas medidas son del tablero. El canto suma aparte, cerca de 0.1 cm por lado.")
+
+    aplicar_medidas(datos, piezas, avisos)
+    area = 0
+    area_fondo = 0
+    canto = 0
+    for pieza in piezas:
+        canto += pieza.canto_mm
+        if pieza.nombre.startswith("Respaldo"):
+            area_fondo += pieza.alto * pieza.ancho * pieza.cantidad
+        else:
+            area += pieza.alto * pieza.ancho * pieza.cantidad
+    hoja = HOJA_ANCHO * HOJA_LARGO
+    return Resultado(
+        listo=True,
+        avisos=avisos,
+        piezas=piezas,
+        ancho_exterior=ancho_exterior,
+        canto_mm=canto,
+        tableros_15=max(hojas, ceil(area * 1.15 / hoja)),
+        tableros_fondo=ceil(area_fondo * 1.15 / hoja) if area_fondo else 0,
+        bisagras=0,
+        pistones=0,
+        confirmat=8,
+        esquema={
+            "ancho": ancho_exterior,
+            "alto": alto,
+            "fondo": fondo,
+            "espesor": espesor,
+            "hueco_ancho": hueco_ancho,
+            "hueco_alto": hueco_alto,
+            "fondo_repisa": fondo_repisa,
+            "repisas": repisas,
+            "posiciones": posiciones,
+            "soportes": 4 * repisas,
+            "hojas": hojas,
+            "fondo_esp": fondo_esp,
         },
     )

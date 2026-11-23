@@ -295,25 +295,15 @@ def _pagina_cortes(proyecto: str, hoja: dict) -> HojaPdf:
     pdf = HojaPdf()
     ancho = ANCHO - 2 * MARGEN
     y = ALTO - 48
-    pdf.texto(MARGEN, y, "Cortes del zoclo", 18, "F2")
+    pdf.texto(MARGEN, y, "CORTES - VISTA GRANDE", 18, "F2")
     y -= 18
     pdf.texto(MARGEN, y, proyecto, 12, "F1", COTA)
-    y -= 22
-    y = _parrafo(
-        pdf, MARGEN, y,
-        "Son dos marcos de pino. Se juntan en L y los cajones se sientan arriba. "
-        "Escribe con lápiz la letra en cada tabla antes de moverla. Esta hoja no lleva la melamina. "
-        "Las medidas de esta hoja están en centímetros.",
-        ancho,
-    )
+    y -= 20
     grueso = hoja["marcos"][0]["espesor"]
-    y = _parrafo(
-        pdf, MARGEN, y,
-        f"Pide pino de {texto_cm(grueso)} cm de grueso y {texto_cm(hoja['zoclo'])} cm de alto. No es melamina. "
-        f"Estos cortes suman {hoja['mm'] / 1000:.2f} m. Pide {hoja['compra']} m, por si una tabla sale mal. "
-        "En el despiece el marco es el rectángulo de afuera. Aquí está cada corte.",
-        ancho,
-    )
+    pdf.rect(MARGEN, y - 58, ancho, 58, AVISO_RELLENO, COTA, 1)
+    pdf.texto(MARGEN + 10, y - 18, f"PINO: {texto_cm(grueso)} cm x {texto_cm(hoja['zoclo'])} cm", 15, "F2", TINTA)
+    pdf.texto(MARGEN + 10, y - 38, f"{hoja['mm'] / 1000:.2f} m cortados  -  {hoja['compra']} m para comprar", 13, "F2", COTA)
+    y -= 72
     for marco in hoja["marcos"]:
         if marco["pasa"] > 0:
             nuevo_pie = max(marco["fondo"] - marco["ancho"], 0)
@@ -333,7 +323,7 @@ def _pagina_cortes(proyecto: str, hoja: dict) -> HojaPdf:
                 yy -= 14
             y = yy - 8
     y -= 6
-    pdf.texto(MARGEN, y, "Los cortes", 13, "F2")
+    pdf.texto(MARGEN, y, "MEDIDAS EN cm  -  MARCAR A, B, C, D, E, F", 13, "F2")
     y -= 8
     columnas = [36, 52, 52, 46, 52]
     encabezados = ["Letra", "Cuántas", "Largo", "Alto", "Grueso", "Para qué"]
@@ -357,7 +347,14 @@ def _pagina_cortes(proyecto: str, hoja: dict) -> HojaPdf:
                 texto_cm(pieza["alto"]),
                 texto_cm(pieza["grueso"]),
             ]
-            detalle = envolver(pieza["que"], 8, resto - 4, "F1") or [""]
+            if "Lado largo" in pieza["que"]:
+                detalle = ["TABLA LARGA"]
+            elif "Punta" in pieza["que"]:
+                detalle = ["PUNTA"]
+            elif "Refuerzo" in pieza["que"]:
+                detalle = ["REFUERZO"]
+            else:
+                detalle = ["PINO"]
             alto_fila = max(14, 11 * len(detalle))
             x = MARGEN
             for i, valor in enumerate(valores):
@@ -408,18 +405,30 @@ def _pagina_marco(marco: dict, punta: str) -> HojaPdf:
     pdf = HojaPdf()
     ancho = ANCHO - 2 * MARGEN
     y = ALTO - 48
-    pdf.texto(MARGEN, y, f"Marco del {marco['clave']}", 16, "F2")
-    y -= 18
-    pdf.texto(
-        MARGEN, y,
-        f"Visto desde arriba. El grueso de cada tabla es {texto_cm(marco['espesor'])} cm. Mide desde la punta marcada.",
-        10, "F1",
-    )
-    y -= 8
+    pdf.texto(MARGEN, y, f"MARCO - {marco['clave']}", 16, "F2")
+    y -= 16
+    pdf.rect(MARGEN, y - 34, ancho, 34, AVISO_RELLENO, COTA, 1)
+    pdf.texto(MARGEN + 8, y - 18, f"FUERA: {texto_cm(marco['largo'])} x {texto_cm(marco['ancho'])} cm", 14, "F2", TINTA)
+    pdf.texto(MARGEN + 330, y - 18, f"PINO {texto_cm(marco['espesor'])} x {texto_cm(marco['alto'])} cm", 11, "F2", COTA)
+    y -= 48
     y = _dibujar_marco(pdf, marco, MARGEN, y)
-    y = _parrafo(pdf, MARGEN, y, punta, ancho, size=10, leading=13)
-    y -= 4
-    _lista(pdf, MARGEN, y, _pasos_marco(marco), ancho)
+    y -= 8
+    lados = _letra(marco, "Lado") or "A/D"
+    puntas = _letra(marco, "Punta") or "B/E"
+    ref = _letra(marco, "Refuerzo")
+    pasos = [
+        f"1  ACOSTAR  -  2 tablas {lados}",
+        f"2  PONER  -  2 puntas {puntas}",
+    ]
+    if marco["centros"] and ref:
+        centros = "  -  ".join(texto_cm(n) for n in marco["centros"])
+        pasos.append(f"3  REFUERZOS {ref}  -  centros: {centros} cm")
+        pasos.append("4  TORNILLOS  -  2 por punta")
+    else:
+        pasos.append("3  SIN REFUERZOS")
+        pasos.append("4  TORNILLOS  -  2 por punta")
+    pasos.append(f"✓  DIAGONAL  -  {texto_cm(marco['diagonal'])} cm")
+    y = _lista(pdf, MARGEN, y, pasos, ancho, size=11, leading=16)
     return pdf
 
 
@@ -479,38 +488,24 @@ def _pagina_l(hoja: dict, lugar: dict) -> HojaPdf:
     pdf = HojaPdf()
     ancho = ANCHO - 2 * MARGEN
     y = ALTO - 48
-    pdf.texto(MARGEN, y, "Juntar la L", 16, "F2")
-    y -= 16
-    pdf.texto(MARGEN, y, "Visto desde arriba. La línea punteada es el mueble. Se corta el pino, no la línea.", 10, "F1")
-    y -= 6
+    pdf.texto(MARGEN, y, "JUNTAR LA L", 18, "F2")
+    y -= 18
+    pdf.rect(MARGEN, y - 48, ancho, 48, AVISO_RELLENO, COTA, 1)
+    pdf.texto(MARGEN + 10, y - 18, f"ATRAS  -  MISMA LINEA", 13, "F2", TINTA)
+    pdf.texto(MARGEN + 10, y - 36, f"FRENTE  -  {texto_cm(hoja['pie'])} cm libres para zapatos", 13, "F2", COTA)
+    y -= 60
     y = _dibujar_l(pdf, hoja, lugar, y)
     pasos = [
-        "Junta los dos marcos en L. Una punta del marco del cajón 1 se recarga en el costado del marco del cajón 2. Se tocan de lado. No montes uno encima del otro.",
-        "La esquina de adentro es de 90 grados. Marca 30 cm sobre un marco y 40 cm sobre el otro. La diagonal entre esas dos marcas tiene que dar 50 cm.",
-        "El lado de atrás de los dos marcos queda en la misma línea recta.",
-        f"Al frente, del marco hasta donde van las puertas, deja {texto_cm(hoja['pie'])} cm libres para meter el pie. Igual en los dos lados.",
-        (
-            f"La punta de afuera del cajón 2 queda a {texto_cm(lugar['aire_punta'])} cm del extremo. "
-            f"El cajón 1 queda a {texto_cm(lugar['aire_fondo_cajon1'])} cm de su pared de atrás "
-            f"y a {texto_cm(lugar['aire_fin_cajon1'])} cm del extremo de la tarja."
-        ),
+        "1  UNIR  -  lado contra lado",
+        "2  ATRAS  -  bordes alineados",
+        f"3  FRENTE  -  dejar {texto_cm(hoja['pie'])} cm",
+        "4  CUADRAR  -  medir las diagonales",
+        "5  FIJAR  -  4 tornillos",
     ]
-    if lugar["sale_cajon2"] > 0:
-        pasos.append(
-            f"El marco del cajón 2 se sale {texto_cm(lugar['sale_cajon2'])} cm de la pared de atrás. "
-            "El otro se queda en su sitio para que la L siga a escuadra. "
-            "Si no quieres que se salga, cambia el hueco o el ancho y vuelve a bajar esta hoja."
-        )
-    pasos.append("Donde se tocan los dos marcos, pon cuatro tornillos: dos arriba y dos abajo. Taladra antes.")
-    pasos.append(
-        f"Del piso a la cara de arriba son {texto_cm(hoja['zoclo'])} cm, en los dos marcos. "
-        "Si el piso está chueco, mete calzas abajo hasta que esa cara quede pareja. "
-        "Los cajones se sientan encima. La melamina no va en esta hoja."
-    )
-    y = _lista(pdf, MARGEN, y, pasos, ancho, size=10, leading=12)
-    y -= 4
-    pdf.texto(MARGEN, y, "Antes de sentar los cajones", 12, "F2")
-    y -= 15
+    y = _lista(pdf, MARGEN, y, pasos, ancho, size=12, leading=18)
+    y -= 8
+    pdf.texto(MARGEN, y, "ANTES DE SENTAR LOS CAJONES", 12, "F2")
+    y -= 16
     revisiones = []
     for marco in hoja["marcos"]:
         if marco["entra"]:
